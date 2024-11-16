@@ -4,42 +4,106 @@
 #include "PredictionAlgorithm.hpp"
 
 struct RoboPredictor::RoboMemory {
-  // Place your RoboMemory content here
-  // Note that the size of this data structure can't exceed 64KiB!
+  // Increased table size for better coverage while staying within memory limits
+  static const uint32_t TABLE_SIZE = 4096;
+
+  struct Entry {
+    uint32_t planetId;
+    uint8_t dayCount;
+    uint8_t totalCount;
+    uint8_t streak; // Track consecutive correct/incorrect predictions
+    bool lastPrediction;
+    bool valid;
+  };
+
+  Entry hashTable[TABLE_SIZE];
+  uint16_t spaceshipCorrect;
+  uint16_t spaceshipTotal;
+  uint16_t globalDayCount;
+  uint16_t globalTotal;
 };
 
 bool RoboPredictor::predictTimeOfDayOnNextPlanet(
     std::uint64_t nextPlanetID, bool spaceshipComputerPrediction) {
-  // Robo can consult data structures in its memory while predicting.
-  // Example: access Robo's memory with roboMemory_ptr-><your RoboMemory
-  // content>
+  // Improved hash function using xor-shift for better distribution
+  uint32_t hash = nextPlanetID;
+  hash ^= hash >> 16;
+  hash *= 0x85ebca6b;
+  hash ^= hash >> 13;
+  hash *= 0xc2b2ae35;
+  hash &= (RoboMemory::TABLE_SIZE - 1);
 
-  // Robo can perform computations using any data in its memory during
-  // prediction. It is important not to exceed the computation cost threshold
-  // while making predictions and updating RoboMemory. The computation cost of
-  // prediction and updating RoboMemory is calculated by the playground
-  // automatically and printed together with accuracy at the end of the
-  // evaluation (see main.cpp for more details).
+  auto &entry = roboMemory_ptr->hashTable[hash];
 
-  // Simple prediction policy: follow the spaceship computer's suggestions
+  // Strong pattern detected for this planet
+  if (entry.valid && entry.planetId == nextPlanetID) {
+    if (entry.streak >= 3) {
+      return entry.lastPrediction;
+    }
+    if (entry.totalCount >= 4) {
+      // Use weighted probability
+      uint16_t threshold = (entry.dayCount * 256) / entry.totalCount;
+      return threshold > 128;
+    }
+  }
+
+  // Global pattern detection
+  if (roboMemory_ptr->globalTotal > 1000) {
+    bool globalTrend =
+        (roboMemory_ptr->globalDayCount * 2 > roboMemory_ptr->globalTotal);
+
+    // If spaceship has good accuracy, combine both predictions
+    if (roboMemory_ptr->spaceshipTotal > 100) {
+      bool spaceshipReliable = (roboMemory_ptr->spaceshipCorrect * 2 >
+                                roboMemory_ptr->spaceshipTotal);
+      return spaceshipReliable ? spaceshipComputerPrediction : globalTrend;
+    }
+    return globalTrend;
+  }
+
   return spaceshipComputerPrediction;
 }
 
 void RoboPredictor::observeAndRecordTimeofdayOnNextPlanet(
     std::uint64_t nextPlanetID, bool timeOfDayOnNextPlanet) {
-  // Robo can consult/update data structures in its memory
-  // Example: access Robo's memory with roboMemory_ptr-><your RoboMemory
-  // content>
+  uint32_t hash = nextPlanetID;
+  hash ^= hash >> 16;
+  hash *= 0x85ebca6b;
+  hash ^= hash >> 13;
+  hash *= 0xc2b2ae35;
+  hash &= (RoboMemory::TABLE_SIZE - 1);
 
-  // It is important not to exceed the computation cost threshold while making
-  // predictions and updating RoboMemory. The computation cost of prediction and
-  // updating RoboMemory is calculated by the playground automatically and
-  // printed together with accuracy at the end of the evaluation (see main.cpp
-  // for more details).
+  auto &entry = roboMemory_ptr->hashTable[hash];
 
-  // Simple prediction policy: do nothing
+  // Update global statistics
+  if (roboMemory_ptr->globalTotal < 65000) {
+    roboMemory_ptr->globalDayCount += timeOfDayOnNextPlanet ? 1 : 0;
+    roboMemory_ptr->globalTotal++;
+  }
+
+  // Update planet-specific statistics
+  if (!entry.valid || entry.planetId != nextPlanetID) {
+    entry.planetId = nextPlanetID;
+    entry.dayCount = timeOfDayOnNextPlanet ? 1 : 0;
+    entry.totalCount = 1;
+    entry.streak = 0;
+    entry.lastPrediction = timeOfDayOnNextPlanet;
+    entry.valid = true;
+  } else {
+    if (entry.totalCount < 255) {
+      entry.dayCount += timeOfDayOnNextPlanet ? 1 : 0;
+      entry.totalCount++;
+    }
+
+    // Update streak counter
+    if (timeOfDayOnNextPlanet == entry.lastPrediction) {
+      entry.streak = (entry.streak < 255) ? entry.streak + 1 : 255;
+    } else {
+      entry.streak = 0;
+    }
+    entry.lastPrediction = timeOfDayOnNextPlanet;
+  }
 }
-
 
 //------------------------------------------------------------------------------
 // Please don't modify this file below
@@ -52,9 +116,5 @@ static_assert(
     "memory are ineligible. Please reduce the size of your RoboMemory struct.");
 
 // Declare constructor/destructor for RoboPredictor
-RoboPredictor::RoboPredictor() {
-  roboMemory_ptr = new RoboMemory;
-}
-RoboPredictor::~RoboPredictor() {
-  delete roboMemory_ptr;
-}
+RoboPredictor::RoboPredictor() { roboMemory_ptr = new RoboMemory; }
+RoboPredictor::~RoboPredictor() { delete roboMemory_ptr; }
