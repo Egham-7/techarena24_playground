@@ -1,108 +1,73 @@
-// This file contains a template for the implementation of Robo prediction
-// algorithm
-
 #include "PredictionAlgorithm.hpp"
 
 struct RoboPredictor::RoboMemory {
-  // Increased table size for better coverage while staying within memory limits
-  static const uint32_t TABLE_SIZE = 4096;
 
-  struct Entry {
-    uint32_t planetId;
-    uint8_t dayCount;
-    uint8_t totalCount;
-    uint8_t streak; // Track consecutive correct/incorrect predictions
-    bool lastPrediction;
-    bool valid;
+  static const uint32_t HASH_SIZE = 8192; // Power of 2 for fast modulo
+  static const uint32_t RECENT_HISTORY_SIZE = 16;
+
+  struct PatternEntry {
+    uint32_t dayCount : 16;
+    uint32_t totalCount : 16;
   };
 
-  Entry hashTable[TABLE_SIZE];
-  uint16_t spaceshipCorrect;
-  uint16_t spaceshipTotal;
-  uint16_t globalDayCount;
-  uint16_t globalTotal;
+  PatternEntry patternTable[HASH_SIZE];
+  uint32_t recentPlanets[RECENT_HISTORY_SIZE];
+  uint32_t recentDays[RECENT_HISTORY_SIZE];
+  uint32_t historyIndex;
+  uint32_t lastPlanet;
+  bool lastDay;
 };
 
+static inline uint32_t hashPlanets(uint64_t planet1, uint64_t planet2) {
+  uint32_t hash = (uint32_t)(planet1 ^ (planet1 >> 32));
+  hash ^= (uint32_t)(planet2 ^ (planet2 >> 32));
+  hash ^= (hash >> 16);
+  return hash & (RoboPredictor::RoboMemory::HASH_SIZE - 1);
+}
+
 bool RoboPredictor::predictTimeOfDayOnNextPlanet(
-    std::uint64_t nextPlanetID, bool spaceshipComputerPrediction) {
-  // Improved hash function using xor-shift for better distribution
-  uint32_t hash = nextPlanetID;
-  hash ^= hash >> 16;
-  hash *= 0x85ebca6b;
-  hash ^= hash >> 13;
-  hash *= 0xc2b2ae35;
-  hash &= (RoboMemory::TABLE_SIZE - 1);
+    uint64_t nextPlanetID, bool spaceshipComputerPrediction) {
+  uint32_t hash = hashPlanets(roboMemory_ptr->lastPlanet, nextPlanetID);
+  const RoboMemory::PatternEntry &entry = roboMemory_ptr->patternTable[hash];
 
-  auto &entry = roboMemory_ptr->hashTable[hash];
+  // If we have enough data, use pattern-based prediction
+  if (entry.totalCount > 0) {
+    uint32_t confidence = (entry.dayCount << 8) / entry.totalCount;
+    bool patternPrediction = confidence > 128; // Threshold at 50%
 
-  // Strong pattern detected for this planet
-  if (entry.valid && entry.planetId == nextPlanetID) {
-    if (entry.streak >= 3) {
-      return entry.lastPrediction;
-    }
-    if (entry.totalCount >= 4) {
-      // Use weighted probability
-      uint16_t threshold = (entry.dayCount * 256) / entry.totalCount;
-      return threshold > 128;
+    // Combine with spaceship prediction using confidence
+    if (entry.totalCount > 4) {
+      return patternPrediction;
     }
   }
 
-  // Global pattern detection
-  if (roboMemory_ptr->globalTotal > 1000) {
-    bool globalTrend =
-        (roboMemory_ptr->globalDayCount * 2 > roboMemory_ptr->globalTotal);
-
-    // If spaceship has good accuracy, combine both predictions
-    if (roboMemory_ptr->spaceshipTotal > 100) {
-      bool spaceshipReliable = (roboMemory_ptr->spaceshipCorrect * 2 >
-                                roboMemory_ptr->spaceshipTotal);
-      return spaceshipReliable ? spaceshipComputerPrediction : globalTrend;
-    }
-    return globalTrend;
-  }
-
+  // Fall back to spaceship prediction if no strong pattern
   return spaceshipComputerPrediction;
 }
 
 void RoboPredictor::observeAndRecordTimeofdayOnNextPlanet(
-    std::uint64_t nextPlanetID, bool timeOfDayOnNextPlanet) {
-  uint32_t hash = nextPlanetID;
-  hash ^= hash >> 16;
-  hash *= 0x85ebca6b;
-  hash ^= hash >> 13;
-  hash *= 0xc2b2ae35;
-  hash &= (RoboMemory::TABLE_SIZE - 1);
+    uint64_t nextPlanetID, bool timeOfDayOnNextPlanet) {
+  uint32_t hash = hashPlanets(roboMemory_ptr->lastPlanet, nextPlanetID);
+  RoboMemory::PatternEntry &entry = roboMemory_ptr->patternTable[hash];
 
-  auto &entry = roboMemory_ptr->hashTable[hash];
-
-  // Update global statistics
-  if (roboMemory_ptr->globalTotal < 65000) {
-    roboMemory_ptr->globalDayCount += timeOfDayOnNextPlanet ? 1 : 0;
-    roboMemory_ptr->globalTotal++;
+  // Update pattern statistics using saturating arithmetic
+  if (entry.totalCount < 0xFFFF) {
+    entry.totalCount++;
+    if (timeOfDayOnNextPlanet && entry.dayCount < 0xFFFF) {
+      entry.dayCount++;
+    }
   }
 
-  // Update planet-specific statistics
-  if (!entry.valid || entry.planetId != nextPlanetID) {
-    entry.planetId = nextPlanetID;
-    entry.dayCount = timeOfDayOnNextPlanet ? 1 : 0;
-    entry.totalCount = 1;
-    entry.streak = 0;
-    entry.lastPrediction = timeOfDayOnNextPlanet;
-    entry.valid = true;
-  } else {
-    if (entry.totalCount < 255) {
-      entry.dayCount += timeOfDayOnNextPlanet ? 1 : 0;
-      entry.totalCount++;
-    }
+  // Update recent history
+  roboMemory_ptr->recentPlanets[roboMemory_ptr->historyIndex] = nextPlanetID;
+  roboMemory_ptr->recentDays[roboMemory_ptr->historyIndex] =
+      timeOfDayOnNextPlanet;
+  roboMemory_ptr->historyIndex = (roboMemory_ptr->historyIndex + 1) &
+                                 (RoboMemory::RECENT_HISTORY_SIZE - 1);
 
-    // Update streak counter
-    if (timeOfDayOnNextPlanet == entry.lastPrediction) {
-      entry.streak = (entry.streak < 255) ? entry.streak + 1 : 255;
-    } else {
-      entry.streak = 0;
-    }
-    entry.lastPrediction = timeOfDayOnNextPlanet;
-  }
+  // Update last state
+  roboMemory_ptr->lastPlanet = nextPlanetID;
+  roboMemory_ptr->lastDay = timeOfDayOnNextPlanet;
 }
 
 //------------------------------------------------------------------------------
@@ -118,3 +83,4 @@ static_assert(
 // Declare constructor/destructor for RoboPredictor
 RoboPredictor::RoboPredictor() { roboMemory_ptr = new RoboMemory; }
 RoboPredictor::~RoboPredictor() { delete roboMemory_ptr; }
+
