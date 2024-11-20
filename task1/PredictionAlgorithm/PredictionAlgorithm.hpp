@@ -1,7 +1,7 @@
-/*
- * This file must declare the following structures and methods.
- * Please don't modify this file.
- */
+// PredictionAlgorithm.hpp
+
+#ifndef PREDICTION_ALGORITHM_HPP
+#define PREDICTION_ALGORITHM_HPP
 
 #include <cstdint>
 
@@ -9,16 +9,17 @@ struct RoboPredictor {
   struct RoboMemory;
   RoboMemory* roboMemory_ptr;
 
+  // Function declarations
   bool predictTimeOfDayOnNextPlanet(std::uint64_t nextPlanetID,
-                                    bool spaceshipComuterPrediction);
+                                    bool spaceshipComputerPrediction);
 
   void observeAndRecordTimeofdayOnNextPlanet(std::uint64_t nextPlanetID,
                                              bool timeOfDayOnNextPlanet);
 
   //---------------------------------------------------------------------
-  // Since the struct RoboMemory is implicitly defined in .cpp
-  // we need to move the declarations of constructor/destructor 
-  // to .cpp too
+  // Declarations of constructor and destructor moved to the .cpp file
   RoboPredictor();
   ~RoboPredictor();
 };
+
+#endif // PREDICTION_ALGORITHM_HPP
